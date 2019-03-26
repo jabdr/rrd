@@ -144,7 +144,7 @@ func (u *Updater) Cache(args ...interface{}) {
 func (u *Updater) Update(args ...interface{}) error {
 	if len(args) != 0 {
 		cs := newCstring(join(args))
-		err :=  u.update([]*cstring{cs})
+		err := u.update([]*cstring{cs})
 		cs.Free()
 		return err
 	} else if len(u.args) != 0 {
@@ -493,4 +493,30 @@ type XportResult struct {
 
 func (r *XportResult) ValueAt(legendIndex, rowIndex int) float64 {
 	return r.values[len(r.Legends)*rowIndex+legendIndex]
+}
+
+func StreamDump(filename, rraName string, rc chan *RrdDumpRow, cancelToken chan bool) error {
+	dumper, err := NewDumper(filename, rraName)
+	if err != nil {
+		return fmt.Errorf("Could not start rrd dump stream: %s", err)
+	}
+	go func() {
+		defer dumper.Free()
+
+	fl:
+		for {
+			select {
+			case <-cancelToken:
+				break fl
+			default:
+				next := dumper.Next()
+				if next == nil {
+					rc <- nil
+					break fl
+				}
+				rc <- next
+			}
+		}
+	}()
+	return nil
 }

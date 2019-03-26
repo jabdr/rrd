@@ -5,6 +5,7 @@ package rrd
 #include <rrd.h>
 #include "rrdfunc.h"
 #cgo pkg-config: librrd
+#cgo CFLAGS: -Wno-deprecated -Wno-deprecated-declarations
 */
 import "C"
 import (
@@ -15,6 +16,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+	"fmt"
+	"os"
 )
 
 type cstring C.char
@@ -544,4 +547,74 @@ func (e *Exporter) xport(start, end time.Time, step time.Duration) (XportResult,
 func (r *XportResult) FreeValues() {
 	sliceHeader := (*reflect.SliceHeader)((unsafe.Pointer(&r.values)))
 	C.free(unsafe.Pointer(sliceHeader.Data))
+}
+
+
+type RrdDumper struct {
+	rrdDumper *C.rrd_dumper_t
+}
+
+type RrdDumpRow struct {
+	Time time.Time
+	Values []float64
+}
+
+func NewDumper(filename, rraName string) (*RrdDumper, error) {
+	if filename == "" || rraName == "" {
+		return nil, fmt.Errorf("Please specify a valid filename and RRA name")
+	}
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return nil, fmt.Errorf("RRD file %s does not exist or isn't readable", filename)
+	}
+	cfname := newCstring(filename)
+	defer cfname.Free()
+	crraname := newCstring(rraName)
+	defer crraname.Free()
+	dumper := new(RrdDumper)
+	dumper.rrdDumper = C.init_rrd_dumper((*C.char)(cfname))
+	if (dumper.rrdDumper == nil) {
+		return nil, fmt.Errorf("Could not open rrd file")
+	}
+
+	if(C.seek_rrd_dumper_to_def(dumper.rrdDumper, (*C.char)(crraname)) != 0) {
+		return nil, fmt.Errorf("rrd did not contain %s rra", rraName)
+	}
+
+	return dumper, nil
+}
+
+func (d *RrdDumper) Free() {
+	C.close_rrd_dumper(d.rrdDumper)
+	C.free(unsafe.Pointer(d.rrdDumper))
+	d.rrdDumper = nil
+}
+
+func (d *RrdDumper) Next() *RrdDumpRow {
+	nextRow := C.yield_rrd_dumper_row(d.rrdDumper)
+	if nextRow == nil {
+		return nil
+	}
+	defer func() {
+		C.free(unsafe.Pointer(nextRow.cols))
+		C.free(unsafe.Pointer(nextRow))
+	}()
+	cvalues := make([]float64, nextRow.num_cols)
+	cvaluesLen := int(nextRow.num_cols)
+	sliceHeader := (*reflect.SliceHeader)((unsafe.Pointer(&cvalues)))
+	sliceHeader.Cap = cvaluesLen
+	sliceHeader.Len = cvaluesLen
+	sliceHeader.Data = uintptr(unsafe.Pointer(nextRow.cols))
+
+	// this is only to make life easier
+	// we copy the floats to go's memory so we can free any c memory
+	// within this call
+	values := make([]float64, cvaluesLen)
+	for i, cval := range cvalues {
+		values[i] = cval
+	}
+	secondsTs := int64(nextRow.timestamp)
+	return &RrdDumpRow{
+		Time: time.Unix(secondsTs, 0),
+		Values: values,
+	}
 }
