@@ -495,8 +495,9 @@ func (r *XportResult) ValueAt(legendIndex, rowIndex int) float64 {
 	return r.values[len(r.Legends)*rowIndex+legendIndex]
 }
 
-func StreamDump(filename, rraName string, rc chan *RrdDumpRow, cancelToken chan bool) error {
+func StreamDump(filename, rraName string, rc chan<- *RrdDumpRow, cancelToken <-chan struct{}) (chan struct{}, error) {
 	dumper, err := NewDumper(filename, rraName)
+	done := make(chan struct{})
 	if err != nil {
 		return fmt.Errorf("Could not start rrd dump stream: %s", err)
 	}
@@ -511,12 +512,12 @@ func StreamDump(filename, rraName string, rc chan *RrdDumpRow, cancelToken chan 
 			default:
 				next := dumper.Next()
 				if next == nil {
-					rc <- nil
 					break fl
 				}
 				rc <- next
 			}
 		}
+		done <- struct{}
 	}()
 	return nil
 }
