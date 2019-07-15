@@ -494,30 +494,3 @@ type XportResult struct {
 func (r *XportResult) ValueAt(legendIndex, rowIndex int) float64 {
 	return r.values[len(r.Legends)*rowIndex+legendIndex]
 }
-
-func StreamDump(filename, rraName string, rc chan<- *RrdDumpRow, cancelToken <-chan struct{}) (chan struct{}, error) {
-	dumper, err := NewDumper(filename, rraName)
-	done := make(chan struct{})
-	if err != nil {
-		return fmt.Errorf("Could not start rrd dump stream: %s", err)
-	}
-	go func() {
-		defer dumper.Free()
-
-	fl:
-		for {
-			select {
-			case <-cancelToken:
-				break fl
-			default:
-				next := dumper.Next()
-				if next == nil {
-					break fl
-				}
-				rc <- next
-			}
-		}
-		done <- struct{}
-	}()
-	return nil
-}
